@@ -1,0 +1,33 @@
+{
+  "name": "openfox-openrouter-free",
+  "version": "1.0.0",
+  "description": "OpenRouter free models provider plugin for OpenFox",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "openfox": {
+    "apiVersion": 1,
+    "plugin": "./dist/index.js"
+  },
+  "peerDependencies": {
+    "openfox": ">=2.0.56 <3"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.15",
+    "openfox": "^2.0.129",
+    "tsup": "^8.4.0",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.5"
+  },
+  "license": "MIT"
+}
