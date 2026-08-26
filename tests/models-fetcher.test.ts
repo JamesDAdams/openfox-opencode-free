@@ -17,6 +17,14 @@ describe('OpenCodeFreeModelManager', () => {
     modelManager.stopPeriodicRefresh()
   })
 
+  it('has selected: true on all DEFAULT_FREE_MODELS', () => {
+    const cached = modelManager.getCachedModels()
+    expect(cached.length).toBeGreaterThan(0)
+    for (const model of cached) {
+      expect(model.selected).toBe(true)
+    }
+  })
+
   it('filters strictly for free models ending with "-free"', () => {
     const freeItem: OpenCodeModelApiItem = {
       id: 'deepseek-v4-flash-free',
@@ -77,6 +85,7 @@ describe('OpenCodeFreeModelManager', () => {
     const models = await modelManager.getFreeModels(true)
     expect(models.length).toBe(1)
     expect(models[0].id).toBe('x-preview-f-free')
+    expect(models[0].selected).toBe(true)
     expect(models[0].contextWindow).toBe(1000000)
     expect(models[0].supportsVision).toBe(true)
     expect(models[0].reasoningEfforts).toEqual(['low', 'high', 'max'])
@@ -97,6 +106,7 @@ describe('OpenCodeFreeModelManager', () => {
 
     await modelManager.getFreeModels(true)
     expect(modelManager.getCachedModels().map((m) => m.id)).toEqual(['model1-free', 'model2-free'])
+    expect(modelManager.getCachedModels().every((m) => m.selected === true)).toBe(true)
 
     // Second fetch 1 hour later: model2-free retired, model3-free added
     mockFetcher.mockImplementation(async (url: string) => {
@@ -113,6 +123,7 @@ describe('OpenCodeFreeModelManager', () => {
 
     await modelManager.getFreeModels(true)
     expect(modelManager.getCachedModels().map((m) => m.id)).toEqual(['model1-free', 'model3-free'])
+    expect(modelManager.getCachedModels().every((m) => m.selected === true)).toBe(true)
   })
 
   it('periodic timer triggers periodic refresh', async () => {

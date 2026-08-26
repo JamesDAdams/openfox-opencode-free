@@ -57,6 +57,7 @@ export const DEFAULT_FREE_MODELS: ModelConfig[] = [
     contextWindow: 1048576,
     source: 'backend',
     supportsVision: false,
+    selected: true,
     reasoningEfforts: ['low', 'high', 'max'],
   },
   {
@@ -65,6 +66,7 @@ export const DEFAULT_FREE_MODELS: ModelConfig[] = [
     contextWindow: 1000000,
     source: 'backend',
     supportsVision: true,
+    selected: true,
     reasoningEfforts: ['low', 'high', 'max'],
   },
   {
@@ -73,6 +75,7 @@ export const DEFAULT_FREE_MODELS: ModelConfig[] = [
     contextWindow: 1048576,
     source: 'backend',
     supportsVision: true,
+    selected: true,
     reasoningEfforts: ['minimal', 'low', 'medium', 'high', 'xhigh'],
   },
   {
@@ -81,6 +84,7 @@ export const DEFAULT_FREE_MODELS: ModelConfig[] = [
     contextWindow: 1048576,
     source: 'backend',
     supportsVision: true,
+    selected: true,
     reasoningEfforts: ['low', 'medium', 'high'],
   },
   {
@@ -89,6 +93,7 @@ export const DEFAULT_FREE_MODELS: ModelConfig[] = [
     contextWindow: 256000,
     source: 'backend',
     supportsVision: false,
+    selected: true,
     reasoningEfforts: ['low', 'medium', 'high'],
   },
   {
@@ -97,6 +102,7 @@ export const DEFAULT_FREE_MODELS: ModelConfig[] = [
     contextWindow: 1000000,
     source: 'backend',
     supportsVision: false,
+    selected: true,
     reasoningEfforts: ['low', 'medium', 'high'],
   },
   {
@@ -105,6 +111,7 @@ export const DEFAULT_FREE_MODELS: ModelConfig[] = [
     contextWindow: 262144,
     source: 'backend',
     supportsVision: false,
+    selected: true,
     reasoningEfforts: ['low', 'medium', 'high'],
   },
   {
@@ -113,6 +120,7 @@ export const DEFAULT_FREE_MODELS: ModelConfig[] = [
     contextWindow: 256000,
     source: 'backend',
     supportsVision: false,
+    selected: true,
     reasoningEfforts: ['low', 'medium', 'high'],
   },
 ]
@@ -309,6 +317,7 @@ export class OpenCodeFreeModelManager {
           contextWindow,
           source: 'backend',
           supportsVision,
+          selected: true,
           ...(reasoningEfforts ? { reasoningEfforts } : {}),
         }
         freeModels.push(modelConfig)
