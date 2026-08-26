@@ -1,77 +1,140 @@
 import type { ModelConfig } from 'openfox/provider'
 
-export interface OpenRouterModelApiItem {
+export interface OpenCodeModelApiItem {
   id: string
   name?: string
+  object?: string
+  owned_by?: string
   context_length?: number
-  pricing?: {
-    prompt?: string | number
-    completion?: string | number
-  }
   architecture?: {
     input_modalities?: string[]
   }
+  modalities?: {
+    input?: string[]
+    output?: string[]
+  }
   supported_parameters?: string[]
+  reasoning?: boolean
+  reasoning_options?: Array<{
+    type?: string
+    values?: string[]
+  }>
 }
 
-export interface OpenRouterModelsApiResponse {
-  data?: OpenRouterModelApiItem[]
+export interface OpenCodeModelsApiResponse {
+  data?: OpenCodeModelApiItem[]
+}
+
+export interface ModelsDevModelInfo {
+  id?: string
+  limit?: {
+    context?: number
+    output?: number
+  }
+  modalities?: {
+    input?: string[]
+    output?: string[]
+  }
+  reasoning?: boolean
+  reasoning_options?: Array<{
+    type?: string
+    values?: string[]
+  }>
+}
+
+export interface ModelsDevApiResponse {
+  [providerId: string]: {
+    models?: {
+      [modelId: string]: ModelsDevModelInfo
+    }
+  }
 }
 
 export const DEFAULT_FREE_MODELS: ModelConfig[] = [
   {
-    id: 'meta-llama/llama-3.3-70b-instruct:free',
-    name: 'Meta: Llama 3.3 70B Instruct (free)',
-    contextWindow: 128000,
+    id: 'deepseek-v4-flash-free',
+    name: 'DeepSeek V4 Flash (free)',
+    contextWindow: 1048576,
     source: 'backend',
     supportsVision: false,
+    reasoningEfforts: ['low', 'high', 'max'],
   },
   {
-    id: 'google/gemini-2.0-flash-lite-preview-02-05:free',
-    name: 'Google: Gemini Flash Lite 2.0 Experimental (free)',
+    id: 'x-preview-f-free',
+    name: 'X Preview F (free)',
+    contextWindow: 1000000,
+    source: 'backend',
+    supportsVision: true,
+    reasoningEfforts: ['low', 'high', 'max'],
+  },
+  {
+    id: 'muse-spark-1.2-contributor-free',
+    name: 'Muse Spark 1.2 Contributor (free)',
     contextWindow: 1048576,
     source: 'backend',
     supportsVision: true,
+    reasoningEfforts: ['minimal', 'low', 'medium', 'high', 'xhigh'],
   },
   {
-    id: 'deepseek/deepseek-r1:free',
-    name: 'DeepSeek: R1 (free)',
-    contextWindow: 16384,
+    id: 'mimo-v2.5-free',
+    name: 'Mimo V2.5 (free)',
+    contextWindow: 1048576,
+    source: 'backend',
+    supportsVision: true,
+    reasoningEfforts: ['low', 'medium', 'high'],
+  },
+  {
+    id: 'hy3-free',
+    name: 'HY3 (free)',
+    contextWindow: 256000,
     source: 'backend',
     supportsVision: false,
     reasoningEfforts: ['low', 'medium', 'high'],
   },
   {
-    id: 'qwen/qwen-2.5-coder-32b-instruct:free',
-    name: 'Qwen: Qwen 2.5 Coder 32B Instruct (free)',
-    contextWindow: 32768,
+    id: 'nemotron-3-ultra-free',
+    name: 'Nemotron 3 Ultra (free)',
+    contextWindow: 1000000,
     source: 'backend',
     supportsVision: false,
+    reasoningEfforts: ['low', 'medium', 'high'],
   },
   {
-    id: 'mistralai/mistral-7b-instruct:free',
-    name: 'Mistral: Mistral 7B Instruct (free)',
-    contextWindow: 32768,
+    id: 'nemotron-3.5-lightning-free',
+    name: 'Nemotron 3.5 Lightning (free)',
+    contextWindow: 262144,
     source: 'backend',
     supportsVision: false,
+    reasoningEfforts: ['low', 'medium', 'high'],
+  },
+  {
+    id: 'laguna-s-2.1-free',
+    name: 'Laguna S 2.1 (free)',
+    contextWindow: 256000,
+    source: 'backend',
+    supportsVision: false,
+    reasoningEfforts: ['low', 'medium', 'high'],
   },
 ]
 
-export class OpenRouterFreeModelManager {
+export class OpenCodeFreeModelManager {
   private cachedModels: ModelConfig[] = [...DEFAULT_FREE_MODELS]
   private lastFetchTimestamp = 0
   private timer: NodeJS.Timeout | null = null
   private readonly refreshIntervalMs: number
   private readonly apiEndpoint: string
+  private readonly modelsDevEndpoint: string
   private readonly fetcher: typeof fetch
 
   constructor(options?: {
     refreshIntervalMs?: number
     apiEndpoint?: string
+    modelsDevEndpoint?: string
     fetcher?: typeof fetch
   }) {
     this.refreshIntervalMs = options?.refreshIntervalMs ?? 3600 * 1000 // 1 hour
-    this.apiEndpoint = options?.apiEndpoint ?? 'https://openrouter.ai/api/v1/models'
+    this.apiEndpoint = options?.apiEndpoint ?? 'https://opencode.ai/zen/v1/models'
+    this.modelsDevEndpoint = options?.modelsDevEndpoint ?? 'https://models.dev/api.json'
     this.fetcher = options?.fetcher ?? fetch
   }
 
@@ -112,7 +175,6 @@ export class OpenRouterFreeModelManager {
       forceRefresh ||
       now - this.lastFetchTimestamp >= this.refreshIntervalMs
     ) {
-      // Trigger refresh asynchronously or await if forceRefresh
       if (forceRefresh) {
         await this.refreshFreeModels()
       } else {
@@ -123,24 +185,69 @@ export class OpenRouterFreeModelManager {
   }
 
   /**
-   * Fetches latest models from OpenRouter API, filters for free models only,
-   * adds new free models, and removes retired ones.
+   * Fetches models.dev API to map context limits, vision capabilities, and reasoning options.
    */
-  async refreshFreeModels(): Promise<ModelConfig[]> {
+  private async fetchModelsDevMap(): Promise<Map<string, ModelsDevModelInfo>> {
+    const devMap = new Map<string, ModelsDevModelInfo>()
     try {
-      const res = await this.fetcher(this.apiEndpoint, {
+      const res = await this.fetcher(this.modelsDevEndpoint, {
         headers: {
           Accept: 'application/json',
-          'User-Agent': 'OpenFox-OpenRouter-Free-Plugin',
+          'User-Agent': 'OpenFox-OpenCode-Free-Plugin',
         },
         signal: AbortSignal.timeout(5000),
       })
+      if (!res.ok) return devMap
 
-      if (!res.ok) {
+      const data = (await res.json()) as ModelsDevApiResponse
+      if (!data || typeof data !== 'object') return devMap
+
+      for (const provider of Object.values(data)) {
+        if (!provider) continue
+        if ((provider as any).modalities && (provider as any).id) {
+          const info = provider as unknown as ModelsDevModelInfo
+          devMap.set(info.id!, info)
+          const simpleId = info.id!.split('/').pop()
+          if (simpleId && !devMap.has(simpleId)) devMap.set(simpleId, info)
+        }
+        if (provider.models) {
+          for (const [modelId, info] of Object.entries(provider.models)) {
+            if (!info) continue
+            devMap.set(modelId, info)
+
+            const simpleId = modelId.split('/').pop()
+            if (simpleId && !devMap.has(simpleId)) {
+              devMap.set(simpleId, info)
+            }
+          }
+        }
+      }
+    } catch {}
+    return devMap
+  }
+
+  /**
+   * Fetches latest models from OpenCode API, filters for free models only (ending in -free),
+   * enriches with models.dev info (context window, vision, reasoning efforts), adds new free models, and removes retired ones.
+   */
+  async refreshFreeModels(): Promise<ModelConfig[]> {
+    try {
+      const [openCodeRes, devMap] = await Promise.all([
+        this.fetcher(this.apiEndpoint, {
+          headers: {
+            Accept: 'application/json',
+            'User-Agent': 'OpenFox-OpenCode-Free-Plugin',
+          },
+          signal: AbortSignal.timeout(5000),
+        }).catch(() => null),
+        this.fetchModelsDevMap(),
+      ])
+
+      if (!openCodeRes || !openCodeRes.ok) {
         return this.cachedModels
       }
 
-      const body = (await res.json()) as OpenRouterModelsApiResponse
+      const body = (await openCodeRes.json()) as OpenCodeModelsApiResponse
       if (!body?.data || !Array.isArray(body.data)) {
         return this.cachedModels
       }
@@ -150,20 +257,59 @@ export class OpenRouterFreeModelManager {
         if (!item.id) continue
         if (!this.isFreeModel(item)) continue
 
+        const baseId = item.id.replace(/-free$/, '').replace(/:free$/, '')
+        let devInfo = devMap.get(item.id) || devMap.get(baseId)
+
+        if (!devInfo) {
+          for (const [k, v] of devMap.entries()) {
+            if (k === baseId || k.endsWith('/' + baseId)) {
+              devInfo = v
+              break
+            }
+          }
+        }
+
         const supportsVision =
-          item.architecture?.input_modalities?.includes('image') ?? false
-        const supportsReasoning =
-          item.supported_parameters?.includes('reasoning') ||
-          item.supported_parameters?.includes('reasoning_effort') ||
-          item.supported_parameters?.includes('include_reasoning')
+          devInfo?.modalities?.input?.includes('image') ??
+          item.modalities?.input?.includes('image') ??
+          item.architecture?.input_modalities?.includes('image') ??
+          false
+
+        const contextWindow =
+          devInfo?.limit?.context ??
+          item.context_length ??
+          128000
+
+        let reasoningEfforts: string[] | undefined
+        const devReasoningOpts = devInfo?.reasoning_options || item.reasoning_options
+        if (Array.isArray(devReasoningOpts)) {
+          const effortOpt = devReasoningOpts.find((opt) => opt.type === 'effort' && Array.isArray(opt.values) && opt.values.length > 0)
+          if (effortOpt?.values) {
+            reasoningEfforts = effortOpt.values
+          }
+        }
+
+        if (!reasoningEfforts) {
+          const isReasoning =
+            devInfo?.reasoning ??
+            item.reasoning ??
+            item.supported_parameters?.includes('reasoning') ??
+            item.supported_parameters?.includes('reasoning_effort') ??
+            item.supported_parameters?.includes('include_reasoning') ??
+            false
+
+          if (isReasoning) {
+            reasoningEfforts = ['low', 'medium', 'high']
+          }
+        }
 
         const modelConfig: ModelConfig = {
           id: item.id,
           name: item.name || item.id,
-          contextWindow: item.context_length ?? 128000,
+          contextWindow,
           source: 'backend',
           supportsVision,
-          ...(supportsReasoning ? { reasoningEfforts: ['low', 'medium', 'high'] } : {}),
+          ...(reasoningEfforts ? { reasoningEfforts } : {}),
         }
         freeModels.push(modelConfig)
       }
@@ -179,15 +325,12 @@ export class OpenRouterFreeModelManager {
   }
 
   /**
-   * Helper to determine if an OpenRouter model item is free.
-   * Free models have prompt = "0" and completion = "0".
+   * Helper to determine if an OpenCode model item is free.
+   * Free models end with "-free".
    */
-  isFreeModel(item: OpenRouterModelApiItem): boolean {
-    if (!item.pricing) return false
-    const promptPrice = parseFloat(String(item.pricing.prompt ?? '-1'))
-    const completionPrice = parseFloat(String(item.pricing.completion ?? '-1'))
-
-    return promptPrice === 0 && completionPrice === 0
+  isFreeModel(item: OpenCodeModelApiItem): boolean {
+    if (!item.id) return false
+    return item.id.endsWith('-free')
   }
 
   getCachedModels(): ModelConfig[] {

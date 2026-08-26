@@ -1,49 +1,46 @@
 import { join } from 'node:path'
 import type { ProviderPluginRegistry, ProviderPreset } from 'openfox/provider'
-import { OpenRouterFreeModelManager } from './models-fetcher.js'
-import { OpenRouterCredentialStore } from './credentials.js'
-import { OpenRouterAuthAdapter } from './auth.js'
-import { OpenRouterFreeTransportAdapter } from './transport.js'
+import { OpenCodeFreeModelManager } from './models-fetcher.js'
+import { OpenCodeCredentialStore } from './credentials.js'
+import { OpenCodeAuthAdapter } from './auth.js'
+import { OpenCodeFreeTransportAdapter } from './transport.js'
 
-export const openRouterFreePreset: ProviderPreset = {
-  id: 'openrouter-free',
-  name: 'OpenRouter (Free Models)',
-  description: 'Use all free models available on OpenRouter with automatic 1-hour updates.',
-  documentationUrl: 'https://openrouter.ai/models?variant=free',
-  requiresAuth: true,
-  authAdapter: 'openrouter-free-auth',
-  transportAdapter: 'openrouter-free-transport',
+export const openCodeFreePreset: ProviderPreset = {
+  id: 'opencode-free',
+  name: 'OpenCode (Free Models)',
+  description: 'Use all free models available on OpenCode with automatic 1-hour updates.',
+  documentationUrl: 'https://opencode.ai/zen/v1',
+  requiresAuth: false,
+  transportAdapter: 'opencode-free-transport',
   defaults: {
-    name: 'OpenRouter Free',
-    url: 'https://openrouter.ai/api/v1',
+    name: 'OpenCode Free',
+    url: 'https://opencode.ai/zen/v1',
     backend: 'openai',
   },
-  connectLabel: 'Connect OpenRouter',
-  disconnectLabel: 'Disconnect OpenRouter',
-  missingPluginMessage: 'Install openfox-openrouter-free to use free OpenRouter models.',
+  missingPluginMessage: 'Install openfox-opencode-free to use free OpenCode models.',
 }
 
 export async function register(registry: ProviderPluginRegistry): Promise<void> {
   const storageDir = join(
     registry.runtime.configDirectory,
     'plugins',
-    'openfox-openrouter-free',
+    'openfox-opencode-free',
   )
-  const credentials = new OpenRouterCredentialStore(
+  const credentials = new OpenCodeCredentialStore(
     join(storageDir, 'credentials.json'),
   )
-  const auth = new OpenRouterAuthAdapter(credentials)
-  const modelManager = new OpenRouterFreeModelManager()
+  const auth = new OpenCodeAuthAdapter(credentials)
+  const modelManager = new OpenCodeFreeModelManager()
   modelManager.startPeriodicRefresh()
 
-  const transport = new OpenRouterFreeTransportAdapter(modelManager, auth)
+  const transport = new OpenCodeFreeTransportAdapter(modelManager, auth)
 
   registry.registerAuth(auth)
   registry.registerTransport(transport)
-  registry.registerPreset(openRouterFreePreset)
+  registry.registerPreset(openCodeFreePreset)
 }
 
-export { OpenRouterFreeModelManager } from './models-fetcher.js'
-export { OpenRouterCredentialStore } from './credentials.js'
-export { OpenRouterAuthAdapter } from './auth.js'
-export { OpenRouterFreeTransportAdapter } from './transport.js'
+export { OpenCodeFreeModelManager } from './models-fetcher.js'
+export { OpenCodeCredentialStore } from './credentials.js'
+export { OpenCodeAuthAdapter } from './auth.js'
+export { OpenCodeFreeTransportAdapter } from './transport.js'

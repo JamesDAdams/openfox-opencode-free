@@ -9,18 +9,18 @@ import type {
   LLMMessage,
   LLMToolDefinition,
 } from 'openfox/provider'
-import type { OpenRouterFreeModelManager } from './models-fetcher.js'
-import type { OpenRouterAuthAdapter } from './auth.js'
+import type { OpenCodeFreeModelManager } from './models-fetcher.js'
+import type { OpenCodeAuthAdapter } from './auth.js'
 
-export class OpenRouterFreeTransportAdapter implements ProviderTransportAdapter {
-  readonly id = 'openrouter-free-transport'
+export class OpenCodeFreeTransportAdapter implements ProviderTransportAdapter {
+  readonly id = 'opencode-free-transport'
 
   constructor(
-    private readonly modelManager: OpenRouterFreeModelManager,
-    private readonly auth?: OpenRouterAuthAdapter,
+    private readonly modelManager: OpenCodeFreeModelManager,
+    private readonly auth?: OpenCodeAuthAdapter,
   ) {}
 
-  async listModels(context: ProviderRequestContext): Promise<ModelConfig[]> {
+  async listModels(_context: ProviderRequestContext): Promise<ModelConfig[]> {
     return await this.modelManager.getFreeModels()
   }
 
@@ -34,7 +34,7 @@ export class OpenRouterFreeTransportAdapter implements ProviderTransportAdapter 
       if (event.type === 'error') throw new Error(event.error)
     }
     if (!result) {
-      throw new Error('OpenRouter response completed without a final result')
+      throw new Error('OpenCode response completed without a final result')
     }
     return result
   }
@@ -43,23 +43,39 @@ export class OpenRouterFreeTransportAdapter implements ProviderTransportAdapter 
     request: LLMCompletionRequest,
     context: ProviderRequestContext,
   ): AsyncIterable<LLMStreamEvent> {
-    const model = context.model ?? 'meta-llama/llama-3.3-70b-instruct:free'
+    const model = context.model ?? 'deepseek-v4-flash-free'
+
+    let apiKey: string | undefined
 
     let accessHeaders: Record<string, string> = {
-      'HTTP-Referer': 'https://github.com/co-l/openfox',
-      'X-Title': 'OpenFox OpenRouter Free Plugin',
+      'X-Title': 'OpenFox OpenCode Free Plugin',
     }
 
-    if (this.auth) {
+    if (context.auth?.headers) {
+      accessHeaders = { ...accessHeaders, ...context.auth.headers }
+    }
+
+    if (context.auth?.accessToken) {
+      apiKey = context.auth.accessToken
+    }
+    if (!apiKey && (context as any).apiKey) {
+      apiKey = (context as any).apiKey
+    }
+    if (!apiKey && this.auth && context.credentialRef) {
       try {
         const access = await this.auth.getAccessContext(context.credentialRef)
+        apiKey = access.accessToken
         if (access.headers) {
           accessHeaders = { ...accessHeaders, ...access.headers }
         }
-      } catch (err: any) {
-        yield { type: 'error', error: err.message || String(err) }
-        return
-      }
+      } catch {}
+    }
+    if (!apiKey) {
+      apiKey = process.env.OPENCODE_API_KEY
+    }
+
+    if (apiKey && !accessHeaders['Authorization']) {
+      accessHeaders['Authorization'] = `Bearer ${apiKey}`
     }
 
     const messages = request.messages.map((m: LLMMessage) => {
@@ -104,7 +120,7 @@ export class OpenRouterFreeTransportAdapter implements ProviderTransportAdapter 
 
     let res: Response
     try {
-      res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      res = await fetch('https://opencode.ai/zen/v1/chat/completions', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -126,7 +142,7 @@ export class OpenRouterFreeTransportAdapter implements ProviderTransportAdapter 
       const errorText = await res.text()
       yield {
         type: 'error',
-        error: `OpenRouter API error (${res.status}): ${errorText}`,
+        error: `OpenCode API error (${res.status}): ${errorText}`,
       }
       return
     }
@@ -144,7 +160,7 @@ export class OpenRouterFreeTransportAdapter implements ProviderTransportAdapter 
     const toolCalls = new Map<number, { id: string; name: string; arguments: string }>()
     let finishReason: LLMCompletionResponse['finishReason'] = 'stop'
     let usage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 }
-    let responseId = 'openrouter-response-' + crypto.randomUUID()
+    let responseId = 'opencode-response-' + crypto.randomUUID()
 
     try {
       while (true) {

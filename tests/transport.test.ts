@@ -1,16 +1,16 @@
 import { describe, it, expect, vi } from 'vitest'
-import { OpenRouterFreeTransportAdapter } from '../src/transport.js'
-import { OpenRouterFreeModelManager } from '../src/models-fetcher.js'
+import { OpenCodeFreeTransportAdapter } from '../src/transport.js'
+import { OpenCodeFreeModelManager } from '../src/models-fetcher.js'
 
-describe('OpenRouterFreeTransportAdapter', () => {
-  it('streams response from OpenRouter API correctly', async () => {
+describe('OpenCodeFreeTransportAdapter', () => {
+  it('streams response from OpenCode API correctly', async () => {
     const mockModelManager = {
       getFreeModels: vi.fn().mockResolvedValue([
-        { id: 'meta-llama/llama-3.3-70b-instruct:free', name: 'Llama 3.3 70B' },
+        { id: 'deepseek-v4-flash-free', name: 'DeepSeek V4 Flash Free' },
       ]),
-    } as unknown as OpenRouterFreeModelManager
+    } as unknown as OpenCodeFreeModelManager
 
-    const transport = new OpenRouterFreeTransportAdapter(mockModelManager)
+    const transport = new OpenCodeFreeTransportAdapter(mockModelManager)
 
     const sseChunks = [
       'data: {"id":"gen-123","choices":[{"delta":{"content":"Hello"}}]}\n\n',
@@ -36,8 +36,8 @@ describe('OpenRouterFreeTransportAdapter', () => {
     for await (const event of transport.stream({
       messages: [{ role: 'user', content: 'Hi' }],
     }, {
-      providerId: 'openrouter-free',
-      model: 'meta-llama/llama-3.3-70b-instruct:free',
+      providerId: 'opencode-free',
+      model: 'deepseek-v4-flash-free',
     })) {
       events.push(event)
     }

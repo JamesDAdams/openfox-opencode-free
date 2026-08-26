@@ -1,7 +1,7 @@
 {
-  "name": "openfox-openrouter-free",
+  "name": "openfox-opencode-free",
   "version": "1.0.0",
-  "description": "OpenRouter free models provider plugin for OpenFox",
+  "description": "OpenCode free models provider plugin for OpenFox",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

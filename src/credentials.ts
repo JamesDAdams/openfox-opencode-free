@@ -1,37 +1,37 @@
 import { readFile, writeFile, mkdir, rm } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
-export interface OpenRouterCredential {
+export interface OpenCodeCredential {
   apiKey: string
 }
 
-export class OpenRouterCredentialStore {
+export class OpenCodeCredentialStore {
   constructor(private readonly filePath: string) {}
 
   private async ensureDir(): Promise<void> {
     await mkdir(dirname(this.filePath), { recursive: true })
   }
 
-  async get(credentialRef: string): Promise<OpenRouterCredential | undefined> {
+  async get(credentialRef: string): Promise<OpenCodeCredential | undefined> {
     try {
       const data = await readFile(this.filePath, 'utf8')
-      const store = JSON.parse(data) as Record<string, OpenRouterCredential>
+      const store = JSON.parse(data) as Record<string, OpenCodeCredential>
       return store[credentialRef]
     } catch {
       return undefined
     }
   }
 
-  async create(credential: OpenRouterCredential): Promise<string> {
+  async create(credential: OpenCodeCredential): Promise<string> {
     await this.ensureDir()
-    let store: Record<string, OpenRouterCredential> = {}
+    let store: Record<string, OpenCodeCredential> = {}
     try {
       const data = await readFile(this.filePath, 'utf8')
       store = JSON.parse(data)
     } catch {
       store = {}
     }
-    const id = 'openrouter-cred-' + Date.now()
+    const id = 'opencode-cred-' + Date.now()
     store[id] = credential
     await writeFile(this.filePath, JSON.stringify(store, null, 2), 'utf8')
     return id
@@ -40,7 +40,7 @@ export class OpenRouterCredentialStore {
   async delete(credentialRef: string): Promise<void> {
     try {
       const data = await readFile(this.filePath, 'utf8')
-      const store = JSON.parse(data) as Record<string, OpenRouterCredential>
+      const store = JSON.parse(data) as Record<string, OpenCodeCredential>
       delete store[credentialRef]
       await writeFile(this.filePath, JSON.stringify(store, null, 2), 'utf8')
     } catch {}

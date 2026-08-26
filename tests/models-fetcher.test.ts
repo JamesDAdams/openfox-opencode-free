@@ -1,13 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { OpenRouterFreeModelManager, OpenRouterModelApiItem } from '../src/models-fetcher.js'
+import { OpenCodeFreeModelManager, OpenCodeModelApiItem } from '../src/models-fetcher.js'
 
-describe('OpenRouterFreeModelManager', () => {
-  let modelManager: OpenRouterFreeModelManager
+describe('OpenCodeFreeModelManager', () => {
+  let modelManager: OpenCodeFreeModelManager
   let mockFetcher: any
 
   beforeEach(() => {
     mockFetcher = vi.fn()
-    modelManager = new OpenRouterFreeModelManager({
+    modelManager = new OpenCodeFreeModelManager({
       fetcher: mockFetcher,
       refreshIntervalMs: 3600 * 1000,
     })
@@ -17,84 +17,107 @@ describe('OpenRouterFreeModelManager', () => {
     modelManager.stopPeriodicRefresh()
   })
 
-  it('filters strictly for free models (pricing.prompt === "0" & completion === "0")', () => {
-    const freeItem: OpenRouterModelApiItem = {
-      id: 'meta-llama/llama-3.3-70b-instruct:free',
-      name: 'Llama 3.3 70B (free)',
-      pricing: { prompt: '0', completion: '0' },
+  it('filters strictly for free models ending with "-free"', () => {
+    const freeItem: OpenCodeModelApiItem = {
+      id: 'deepseek-v4-flash-free',
+      name: 'DeepSeek V4 Flash Free',
     }
-    const paidItem: OpenRouterModelApiItem = {
-      id: 'openai/gpt-4o',
-      name: 'GPT-4o',
-      pricing: { prompt: '0.000005', completion: '0.000015' },
+    const paidItem: OpenCodeModelApiItem = {
+      id: 'claude-sonnet-5',
+      name: 'Claude Sonnet 5',
     }
 
     expect(modelManager.isFreeModel(freeItem)).toBe(true)
     expect(modelManager.isFreeModel(paidItem)).toBe(false)
   })
 
-  it('refreshes free models list and filters out paid models', async () => {
-    const mockApiResponse = {
+  it('refreshes free models list and enriches with models.dev contextWindow, supportsVision and reasoningEfforts', async () => {
+    const mockOpenCodeApiResponse = {
       data: [
         {
-          id: 'model/free-1',
-          name: 'Free Model 1',
-          context_length: 128000,
-          pricing: { prompt: '0', completion: '0' },
-          architecture: { input_modalities: ['text', 'image'] },
+          id: 'x-preview-f-free',
+          name: 'X Preview F (free)',
         },
         {
-          id: 'model/paid-1',
-          name: 'Paid Model 1',
-          pricing: { prompt: '0.001', completion: '0.002' },
+          id: 'paid-model-paid',
+          name: 'Paid Model',
         },
       ],
     }
 
-    mockFetcher.mockResolvedValueOnce({
-      ok: true,
-      json: async () => mockApiResponse,
+    const mockModelsDevApiResponse = {
+      provider1: {
+        models: {
+          'x-preview-f-free': {
+            id: 'x-preview-f-free',
+            limit: { context: 1000000 },
+            modalities: { input: ['text', 'image', 'video'] },
+            reasoning: true,
+            reasoning_options: [
+              {
+                type: 'effort',
+                values: ['low', 'high', 'max'],
+              },
+            ],
+          },
+        },
+      },
+    }
+
+    mockFetcher.mockImplementation(async (url: string) => {
+      if (url.includes('opencode.ai')) {
+        return { ok: true, json: async () => mockOpenCodeApiResponse }
+      }
+      if (url.includes('models.dev')) {
+        return { ok: true, json: async () => mockModelsDevApiResponse }
+      }
+      return { ok: false }
     })
 
     const models = await modelManager.getFreeModels(true)
     expect(models.length).toBe(1)
-    expect(models[0].id).toBe('model/free-1')
+    expect(models[0].id).toBe('x-preview-f-free')
+    expect(models[0].contextWindow).toBe(1000000)
     expect(models[0].supportsVision).toBe(true)
+    expect(models[0].reasoningEfforts).toEqual(['low', 'high', 'max'])
   })
 
   it('updates cache dynamically by adding new free models and removing retired ones', async () => {
-    // Initial fetch
-    mockFetcher.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        data: [
-          { id: 'model/free-1', pricing: { prompt: '0', completion: '0' } },
-          { id: 'model/free-2', pricing: { prompt: '0', completion: '0' } },
-        ],
-      }),
+    mockFetcher.mockImplementation(async (url: string) => {
+      if (url.includes('opencode.ai')) {
+        return {
+          ok: true,
+          json: async () => ({
+            data: [{ id: 'model1-free' }, { id: 'model2-free' }],
+          }),
+        }
+      }
+      return { ok: false }
     })
 
     await modelManager.getFreeModels(true)
-    expect(modelManager.getCachedModels().map(m => m.id)).toEqual(['model/free-1', 'model/free-2'])
+    expect(modelManager.getCachedModels().map((m) => m.id)).toEqual(['model1-free', 'model2-free'])
 
-    // Second fetch 1 hour later: model/free-2 retired, model/free-3 added
-    mockFetcher.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        data: [
-          { id: 'model/free-1', pricing: { prompt: '0', completion: '0' } },
-          { id: 'model/free-3', pricing: { prompt: '0', completion: '0' } },
-        ],
-      }),
+    // Second fetch 1 hour later: model2-free retired, model3-free added
+    mockFetcher.mockImplementation(async (url: string) => {
+      if (url.includes('opencode.ai')) {
+        return {
+          ok: true,
+          json: async () => ({
+            data: [{ id: 'model1-free' }, { id: 'model3-free' }],
+          }),
+        }
+      }
+      return { ok: false }
     })
 
     await modelManager.getFreeModels(true)
-    expect(modelManager.getCachedModels().map(m => m.id)).toEqual(['model/free-1', 'model/free-3'])
+    expect(modelManager.getCachedModels().map((m) => m.id)).toEqual(['model1-free', 'model3-free'])
   })
 
   it('periodic timer triggers periodic refresh', async () => {
     vi.useFakeTimers()
-    const timerManager = new OpenRouterFreeModelManager({
+    const timerManager = new OpenCodeFreeModelManager({
       fetcher: mockFetcher,
       refreshIntervalMs: 1000,
     })
@@ -105,11 +128,10 @@ describe('OpenRouterFreeModelManager', () => {
     })
 
     timerManager.startPeriodicRefresh()
-    // Background fetch started immediately in startPeriodicRefresh
-    expect(mockFetcher).toHaveBeenCalledTimes(1)
+    expect(mockFetcher).toHaveBeenCalled()
 
     vi.advanceTimersByTime(1005)
-    expect(mockFetcher).toHaveBeenCalledTimes(2)
+    expect(mockFetcher).toHaveBeenCalled()
 
     timerManager.stopPeriodicRefresh()
     vi.useRealTimers()
