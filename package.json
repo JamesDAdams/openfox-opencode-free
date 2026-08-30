@@ -17,6 +17,7 @@
   },
   "openfox": {
     "apiVersion": 1,
+    "hasSettings": true,
     "plugin": "./dist/index.js"
   },
   "peerDependencies": {

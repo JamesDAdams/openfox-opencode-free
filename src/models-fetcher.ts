@@ -1,4 +1,5 @@
 import type { ModelConfig } from 'openfox/provider'
+import { DEFAULT_SETTINGS, type OpenCodePluginSettings } from './settings.js'
 
 export interface OpenCodeModelApiItem {
   id: string
@@ -125,40 +126,90 @@ export const DEFAULT_FREE_MODELS: ModelConfig[] = [
   },
 ]
 
+export interface OpenCodeFreeModelManagerOptions {
+  refreshIntervalMs?: number
+  apiEndpoint?: string
+  modelsDevEndpoint?: string
+  fetcher?: typeof fetch
+  notify?: (notification: { title: string; body: string }) => void
+  settings?: OpenCodePluginSettings
+}
+
 export class OpenCodeFreeModelManager {
   private cachedModels: ModelConfig[] = [...DEFAULT_FREE_MODELS]
+  private knownModelIds: Set<string> = new Set(DEFAULT_FREE_MODELS.map((m) => m.id))
+  private lastDiscoveredModels: string[] = []
+  private lastRemovedModels: string[] = []
+  private isInitialLoad = true
   private lastFetchTimestamp = 0
   private timer: NodeJS.Timeout | null = null
-  private readonly refreshIntervalMs: number
+  private readonly customRefreshIntervalMs?: number
   private readonly apiEndpoint: string
   private readonly modelsDevEndpoint: string
   private readonly fetcher: typeof fetch
+  private notifier?: (notification: { title: string; body: string }) => void
+  private settings: OpenCodePluginSettings
 
-  constructor(options?: {
-    refreshIntervalMs?: number
-    apiEndpoint?: string
-    modelsDevEndpoint?: string
-    fetcher?: typeof fetch
-  }) {
-    this.refreshIntervalMs = options?.refreshIntervalMs ?? 3600 * 1000 // 1 hour
+  constructor(options?: OpenCodeFreeModelManagerOptions) {
+    this.customRefreshIntervalMs = options?.refreshIntervalMs
     this.apiEndpoint = options?.apiEndpoint ?? 'https://opencode.ai/zen/v1/models'
     this.modelsDevEndpoint = options?.modelsDevEndpoint ?? 'https://models.dev/api.json'
     this.fetcher = options?.fetcher ?? fetch
+    this.notifier = options?.notify
+    this.settings = options?.settings ?? { ...DEFAULT_SETTINGS }
+  }
+
+  getRefreshIntervalMs(): number {
+    if (this.customRefreshIntervalMs !== undefined) {
+      return this.customRefreshIntervalMs
+    }
+    const minutes = this.settings.refreshIntervalMinutes || DEFAULT_SETTINGS.refreshIntervalMinutes
+    return minutes * 60 * 1000
+  }
+
+  setNotifier(notify: (notification: { title: string; body: string }) => void): void {
+    this.notifier = notify
+  }
+
+  updateSettings(settings: OpenCodePluginSettings): void {
+    const previousInterval = this.getRefreshIntervalMs()
+    this.settings = { ...settings }
+    const newInterval = this.getRefreshIntervalMs()
+
+    if (this.timer && previousInterval !== newInterval) {
+      this.stopPeriodicRefresh()
+      this.startPeriodicRefresh(false)
+    }
+  }
+
+  getSettings(): OpenCodePluginSettings {
+    return { ...this.settings }
+  }
+
+  getLastDiscoveredModels(): string[] {
+    return [...this.lastDiscoveredModels]
+  }
+
+  getLastRemovedModels(): string[] {
+    return [...this.lastRemovedModels]
   }
 
   /**
-   * Start periodic 1-hour background refresh.
+   * Start periodic background refresh.
    */
-  startPeriodicRefresh(): void {
+  startPeriodicRefresh(checkOnStart = this.settings.checkOnStartup): void {
     if (this.timer) return
-    // Fetch immediately in background without blocking
-    this.refreshFreeModels().catch(() => {})
+
+    if (checkOnStart) {
+      this.refreshFreeModels(false, false).catch(() => {})
+    }
 
     this.timer = setInterval(() => {
-      this.refreshFreeModels().catch(() => {
+      this.refreshFreeModels(false, false).catch(() => {
         // Ignore background refresh errors; stale cache will remain
       })
-    }, this.refreshIntervalMs)
+    }, this.getRefreshIntervalMs())
+
     if (this.timer.unref) {
       this.timer.unref()
     }
@@ -175,18 +226,18 @@ export class OpenCodeFreeModelManager {
   }
 
   /**
-   * Returns the list of free models, refreshing if cache is expired (1x per hour) or empty.
+   * Returns the list of free models, refreshing if cache is expired or empty.
    */
-  async getFreeModels(forceRefresh = false): Promise<ModelConfig[]> {
+  async getFreeModels(forceRefresh = false, isManual = false): Promise<ModelConfig[]> {
     const now = Date.now()
     if (
       forceRefresh ||
-      now - this.lastFetchTimestamp >= this.refreshIntervalMs
+      now - this.lastFetchTimestamp >= this.getRefreshIntervalMs()
     ) {
       if (forceRefresh) {
-        await this.refreshFreeModels()
+        await this.refreshFreeModels(forceRefresh, isManual)
       } else {
-        this.refreshFreeModels().catch(() => {})
+        this.refreshFreeModels(false, isManual).catch(() => {})
       }
     }
     return this.cachedModels
@@ -238,7 +289,7 @@ export class OpenCodeFreeModelManager {
    * Fetches latest models from OpenCode API, filters for free models only (ending in -free),
    * enriches with models.dev info (context window, vision, reasoning efforts), adds new free models, and removes retired ones.
    */
-  async refreshFreeModels(): Promise<ModelConfig[]> {
+  async refreshFreeModels(_forceRefresh = false, isManual = false): Promise<ModelConfig[]> {
     try {
       const [openCodeRes, devMap] = await Promise.all([
         this.fetcher(this.apiEndpoint, {
@@ -252,6 +303,12 @@ export class OpenCodeFreeModelManager {
       ])
 
       if (!openCodeRes || !openCodeRes.ok) {
+        if (isManual && this.notifier) {
+          this.notifier({
+            title: 'OpenCode Sync Failed',
+            body: `Failed to fetch models from OpenCode (HTTP ${openCodeRes?.status ?? 'error'}).`,
+          })
+        }
         return this.cachedModels
       }
 
@@ -261,6 +318,8 @@ export class OpenCodeFreeModelManager {
       }
 
       const freeModels: ModelConfig[] = []
+      const newlyDiscoveredModels: string[] = []
+
       for (const item of body.data) {
         if (!item.id) continue
         if (!this.isFreeModel(item)) continue
@@ -321,14 +380,71 @@ export class OpenCodeFreeModelManager {
           ...(reasoningEfforts ? { reasoningEfforts } : {}),
         }
         freeModels.push(modelConfig)
+
+        if (!this.knownModelIds.has(item.id)) {
+          newlyDiscoveredModels.push(modelConfig.name || modelConfig.id)
+        }
       }
 
+      const freeModelIds = new Set(freeModels.map((m) => m.id))
+      const removedModels: string[] = []
+      if (!this.isInitialLoad) {
+        for (const id of this.knownModelIds) {
+          if (!freeModelIds.has(id)) {
+            const oldModel = this.cachedModels.find((m) => m.id === id)
+            removedModels.push(oldModel?.name || id)
+          }
+        }
+      }
+
+      const wasInitial = this.isInitialLoad
+      this.lastDiscoveredModels = newlyDiscoveredModels
+      this.lastRemovedModels = removedModels
       if (freeModels.length > 0) {
         this.cachedModels = freeModels
+        this.knownModelIds = freeModelIds
       }
       this.lastFetchTimestamp = Date.now()
+      this.isInitialLoad = false
+
+      // Notifications logic
+      if (this.notifier) {
+        const changes: string[] = []
+        if (newlyDiscoveredModels.length > 0) {
+          changes.push(`Added (${newlyDiscoveredModels.length}): ${newlyDiscoveredModels.join(', ')}`)
+        }
+        if (removedModels.length > 0) {
+          changes.push(`Removed (${removedModels.length}): ${removedModels.join(', ')}`)
+        }
+
+        if (isManual) {
+          this.notifier({
+            title: 'OpenCode Free Models Synchronized',
+            body: changes.length > 0
+              ? `Sync complete: ${freeModels.length} free models available (${changes.join(' | ')}).`
+              : `Sync complete: ${freeModels.length} free models are available (no changes).`,
+          })
+        } else if (!wasInitial && changes.length > 0 && (this.settings.notifyOnNewModelsOnly || this.settings.notifyOnEveryCheck)) {
+          this.notifier({
+            title: 'OpenCode Free Models Updated',
+            body: changes.join('\n'),
+          })
+        } else if (this.settings.notifyOnEveryCheck && (!wasInitial || changes.length === 0)) {
+          this.notifier({
+            title: 'OpenCode Free Models Checked',
+            body: `Check complete: ${freeModels.length} free models available (no changes).`,
+          })
+        }
+      }
+
       return this.cachedModels
-    } catch {
+    } catch (err) {
+      if (isManual && this.notifier) {
+        this.notifier({
+          title: 'OpenCode Sync Error',
+          body: err instanceof Error ? err.message : 'Error syncing models from OpenCode',
+        })
+      }
       return this.cachedModels
     }
   }

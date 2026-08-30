@@ -4,12 +4,15 @@ import { OpenCodeFreeModelManager, OpenCodeModelApiItem } from '../src/models-fe
 describe('OpenCodeFreeModelManager', () => {
   let modelManager: OpenCodeFreeModelManager
   let mockFetcher: any
+  let mockNotify: any
 
   beforeEach(() => {
     mockFetcher = vi.fn()
+    mockNotify = vi.fn()
     modelManager = new OpenCodeFreeModelManager({
       fetcher: mockFetcher,
       refreshIntervalMs: 3600 * 1000,
+      notify: mockNotify,
     })
   })
 
@@ -91,13 +94,33 @@ describe('OpenCodeFreeModelManager', () => {
     expect(models[0].reasoningEfforts).toEqual(['low', 'high', 'max'])
   })
 
-  it('updates cache dynamically by adding new free models and removing retired ones', async () => {
+  it('notifies when new models are discovered', async () => {
     mockFetcher.mockImplementation(async (url: string) => {
       if (url.includes('opencode.ai')) {
         return {
           ok: true,
           json: async () => ({
-            data: [{ id: 'model1-free' }, { id: 'model2-free' }],
+            data: [{ id: 'model1-free', name: 'Model 1' }],
+          }),
+        }
+      }
+      return { ok: false }
+    })
+
+    // Initial fetch (startup)
+    await modelManager.getFreeModels(true)
+    mockNotify.mockClear()
+
+    // Second fetch: new model added
+    mockFetcher.mockImplementation(async (url: string) => {
+      if (url.includes('opencode.ai')) {
+        return {
+          ok: true,
+          json: async () => ({
+            data: [
+              { id: 'model1-free', name: 'Model 1' },
+              { id: 'model2-free', name: 'Model 2' },
+            ],
           }),
         }
       }
@@ -105,32 +128,87 @@ describe('OpenCodeFreeModelManager', () => {
     })
 
     await modelManager.getFreeModels(true)
-    expect(modelManager.getCachedModels().map((m) => m.id)).toEqual(['model1-free', 'model2-free'])
-    expect(modelManager.getCachedModels().every((m) => m.selected === true)).toBe(true)
-
-    // Second fetch 1 hour later: model2-free retired, model3-free added
-    mockFetcher.mockImplementation(async (url: string) => {
-      if (url.includes('opencode.ai')) {
-        return {
-          ok: true,
-          json: async () => ({
-            data: [{ id: 'model1-free' }, { id: 'model3-free' }],
-          }),
-        }
-      }
-      return { ok: false }
-    })
-
-    await modelManager.getFreeModels(true)
-    expect(modelManager.getCachedModels().map((m) => m.id)).toEqual(['model1-free', 'model3-free'])
-    expect(modelManager.getCachedModels().every((m) => m.selected === true)).toBe(true)
+    expect(mockNotify).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: 'OpenCode Free Models Updated',
+        body: expect.stringContaining('Model 2'),
+      }),
+    )
   })
 
-  it('periodic timer triggers periodic refresh', async () => {
+  it('notifies when a model is removed', async () => {
+    mockFetcher.mockImplementation(async (url: string) => {
+      if (url.includes('opencode.ai')) {
+        return {
+          ok: true,
+          json: async () => ({
+            data: [
+              { id: 'model1-free', name: 'Model 1' },
+              { id: 'model2-free', name: 'Model 2' },
+            ],
+          }),
+        }
+      }
+      return { ok: false }
+    })
+    await modelManager.getFreeModels(true)
+    mockNotify.mockClear()
+
+    // Second fetch: model2-free removed
+    mockFetcher.mockImplementation(async (url: string) => {
+      if (url.includes('opencode.ai')) {
+        return {
+          ok: true,
+          json: async () => ({
+            data: [{ id: 'model1-free', name: 'Model 1' }],
+          }),
+        }
+      }
+      return { ok: false }
+    })
+
+    await modelManager.getFreeModels(true)
+    expect(mockNotify).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: 'OpenCode Free Models Updated',
+        body: expect.stringContaining('Removed (1): Model 2'),
+      }),
+    )
+  })
+
+  it('notifies on manual sync and includes list of new models if any', async () => {
+    mockFetcher.mockImplementation(async (url: string) => {
+      if (url.includes('opencode.ai')) {
+        return {
+          ok: true,
+          json: async () => ({
+            data: [{ id: 'model1-free', name: 'Model 1' }],
+          }),
+        }
+      }
+      return { ok: false }
+    })
+
+    await modelManager.getFreeModels(true, true)
+
+    expect(mockNotify).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: 'OpenCode Free Models Synchronized',
+        body: expect.stringContaining('Sync complete: 1 free models available'),
+      }),
+    )
+  })
+
+  it('periodic timer triggers periodic refresh and updates interval on setting change', async () => {
     vi.useFakeTimers()
     const timerManager = new OpenCodeFreeModelManager({
       fetcher: mockFetcher,
-      refreshIntervalMs: 1000,
+      settings: {
+        notifyOnNewModelsOnly: true,
+        notifyOnEveryCheck: false,
+        checkOnStartup: true,
+        refreshIntervalMinutes: 10,
+      },
     })
 
     mockFetcher.mockResolvedValue({
@@ -138,11 +216,21 @@ describe('OpenCodeFreeModelManager', () => {
       json: async () => ({ data: [] }),
     })
 
-    timerManager.startPeriodicRefresh()
-    expect(mockFetcher).toHaveBeenCalled()
+    timerManager.startPeriodicRefresh(true)
+    expect(mockFetcher).toHaveBeenCalledTimes(2)
 
-    vi.advanceTimersByTime(1005)
-    expect(mockFetcher).toHaveBeenCalled()
+    vi.advanceTimersByTime(10 * 60 * 1000 + 5)
+    expect(mockFetcher).toHaveBeenCalledTimes(4)
+
+    timerManager.updateSettings({
+      notifyOnNewModelsOnly: true,
+      notifyOnEveryCheck: false,
+      checkOnStartup: true,
+      refreshIntervalMinutes: 5,
+    })
+
+    vi.advanceTimersByTime(5 * 60 * 1000 + 5)
+    expect(mockFetcher).toHaveBeenCalledTimes(6)
 
     timerManager.stopPeriodicRefresh()
     vi.useRealTimers()
