@@ -1,7 +1,9 @@
-node_modules
-dist
-*.tgz
+node_modules/
+dist/
 .DS_Store
-
-# Credentials (secret)
+*.log
+*.key
 credentials.json
+credentials.key
+settings.json
+.env

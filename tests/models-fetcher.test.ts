@@ -20,9 +20,20 @@ describe('OpenCodeFreeModelManager', () => {
     modelManager.stopPeriodicRefresh()
   })
 
-  it('has selected: true on all DEFAULT_FREE_MODELS', () => {
-    const cached = modelManager.getCachedModels()
-    expect(cached.length).toBeGreaterThan(0)
+  it('fetches models dynamically and has selected: true on discovered models', async () => {
+    mockFetcher.mockImplementation(async (url: string) => {
+      if (url.includes('opencode.ai')) {
+        return {
+          ok: true,
+          json: async () => ({
+            data: [{ id: 'deepseek-v4-flash-free', name: 'DeepSeek V4 Flash Free' }],
+          }),
+        }
+      }
+      return { ok: false }
+    })
+    const cached = await modelManager.getFreeModels(true)
+    expect(cached.length).toBe(1)
     for (const model of cached) {
       expect(model.selected).toBe(true)
     }
@@ -130,8 +141,8 @@ describe('OpenCodeFreeModelManager', () => {
     await modelManager.getFreeModels(true)
     expect(mockNotify).toHaveBeenCalledWith(
       expect.objectContaining({
-        title: 'OpenCode Free Models Updated',
-        body: expect.stringContaining('Model 2'),
+        title: expect.objectContaining({ en: 'OpenCode Free Models Updated' }),
+        body: expect.objectContaining({ en: expect.stringContaining('Model 2') }),
       }),
     )
   })
@@ -170,8 +181,8 @@ describe('OpenCodeFreeModelManager', () => {
     await modelManager.getFreeModels(true)
     expect(mockNotify).toHaveBeenCalledWith(
       expect.objectContaining({
-        title: 'OpenCode Free Models Updated',
-        body: expect.stringContaining('Removed (1): Model 2'),
+        title: expect.objectContaining({ en: 'OpenCode Free Models Updated' }),
+        body: expect.objectContaining({ en: expect.stringContaining('Removed (1): Model 2') }),
       }),
     )
   })
@@ -193,8 +204,8 @@ describe('OpenCodeFreeModelManager', () => {
 
     expect(mockNotify).toHaveBeenCalledWith(
       expect.objectContaining({
-        title: 'OpenCode Free Models Synchronized',
-        body: expect.stringContaining('Sync complete: 1 free models available'),
+        title: expect.objectContaining({ en: 'OpenCode Free Models Synchronized' }),
+        body: expect.objectContaining({ en: expect.stringContaining('Sync complete: 1 free models available') }),
       }),
     )
   })

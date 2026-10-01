@@ -1,4 +1,7 @@
 # openfox-opencode-free
+
+> ⚠️ **Warning:** Using this plugin violates Google's Terms of Service.
+
 OpenFox plugin for the OpenCode provider focused on **free models only** (`https://opencode.ai/zen/v1`), with an automatic hourly update system (1x per hour).
 
 ## Features

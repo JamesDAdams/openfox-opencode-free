@@ -67,7 +67,8 @@ export class OpenCodeAuthAdapter implements ProviderAuthAdapter {
       accessToken: apiKey,
       headers: {
         Authorization: `Bearer ${apiKey}`,
-        'X-Title': 'OpenFox OpenCode Free Plugin',
+        'User-Agent': 'opencode/1.0.0',
+        'x-opencode-client': 'cli',
       },
     }
   }

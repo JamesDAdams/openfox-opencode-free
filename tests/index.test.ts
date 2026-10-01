@@ -49,7 +49,10 @@ describe('index.ts plugin register', () => {
     expect(registeredPresets[0]).toEqual(openCodeFreePreset)
 
     expect(registeredSettings).toBeDefined()
-    expect(registeredSettings.title).toBe('OpenCode Free Models Configuration')
+    expect(registeredSettings.title).toEqual({
+      en: 'OpenCode Free Models Configuration',
+      fr: 'Configuration des modèles gratuits OpenCode',
+    })
     expect(registeredSettings.fields).toHaveLength(5)
     expect(registeredSettings.fields.map((f: any) => f.key)).toEqual([
       'checkOnStartup',
@@ -60,11 +63,12 @@ describe('index.ts plugin register', () => {
     ])
     expect(registeredSettings.fields[0].type).toBe('boolean')
     expect(registeredSettings.fields[1].type).toBe('number')
-    expect(registeredSettings.fields[2].label).toBe(
-      'Notify only when new models are available or a models was removed',
-    )
+    expect(registeredSettings.fields[2].label).toEqual({
+      en: 'Notify only when new models are available or a model was removed',
+      fr: 'Notifier uniquement lors de l’ajout ou du retrait de modèles',
+    })
     expect(registeredSettings.fields[4].type).toBe('button')
-    expect(registeredSettings.fields[4].buttonLabel).toBe('Sync Now')
+    expect(registeredSettings.fields[4].buttonLabel).toEqual({ en: 'Sync Now', fr: 'Synchroniser' })
 
     const initialVals = await registeredSettings.getSettings()
     expect(initialVals.checkOnStartup).toBe(true)

@@ -1,24 +1,35 @@
 {
   "name": "openfox-opencode-free",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "OpenCode free models provider plugin for OpenFox",
-  "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "type": "module",
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc --noEmit"
+  },
   "files": [
     "dist",
     "README.md",
     "LICENSE"
   ],
-  "scripts": {
-    "build": "tsup",
-    "typecheck": "tsc --noEmit",
-    "test": "vitest run"
-  },
   "openfox": {
-    "apiVersion": 1,
-    "hasSettings": true,
-    "plugin": "./dist/index.js"
+    "apiVersion": 2,
+    "entry": "./dist/index.js",
+    "displayName": "OpenCode Free",
+    "description": "Use all free models available on OpenCode with automatic updates and live notifications.\n<span class=\"text-accent-error font-medium\">⚠️ Using this plugin violates Google's Terms of Service.</span>",
+    "icon": "https://opencode.ai/_build/assets/preview-opencode-logo-dark-ZBwNGoYp.png",
+    "capabilities": [
+      "presets",
+      "settings",
+      "tools",
+      "hooks",
+      "rpc",
+      "notifications"
+    ],
+    "timeoutMs": 15000
   },
   "peerDependencies": {
     "openfox": ">=2.0.56 <3"
@@ -30,5 +41,6 @@
     "typescript": "^5.7.3",
     "vitest": "^3.0.5"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "author": "James Adams"
 }

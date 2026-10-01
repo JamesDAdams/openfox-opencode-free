@@ -46,9 +46,19 @@ export class OpenCodeFreeTransportAdapter implements ProviderTransportAdapter {
     const model = context.model ?? 'deepseek-v4-flash-free'
 
     let apiKey: string | undefined
+    const sessionId =
+      (context as any).sessionId ||
+      (context as any).sessionID ||
+      (request as any).sessionId ||
+      `session-${crypto.randomUUID()}`
+    const requestId = `req-${crypto.randomUUID()}`
 
     let accessHeaders: Record<string, string> = {
-      'X-Title': 'OpenFox OpenCode Free Plugin',
+      'User-Agent': 'opencode/1.0.0',
+      'x-opencode-client': 'cli',
+      'x-opencode-session': sessionId,
+      'x-opencode-request': requestId,
+      'X-Title': 'OpenCode',
     }
 
     if (context.auth?.headers) {
@@ -74,8 +84,16 @@ export class OpenCodeFreeTransportAdapter implements ProviderTransportAdapter {
       apiKey = process.env.OPENCODE_API_KEY
     }
 
-    if (apiKey && !accessHeaders['Authorization']) {
-      accessHeaders['Authorization'] = `Bearer ${apiKey}`
+    accessHeaders['Authorization'] =
+      accessHeaders['Authorization'] || (apiKey ? `Bearer ${apiKey}` : 'Bearer public')
+    if (!accessHeaders['x-opencode-session']) {
+      accessHeaders['x-opencode-session'] = sessionId
+    }
+    if (!accessHeaders['x-opencode-client']) {
+      accessHeaders['x-opencode-client'] = 'cli'
+    }
+    if (!accessHeaders['User-Agent']) {
+      accessHeaders['User-Agent'] = 'opencode/1.0.0'
     }
 
     const messages = request.messages.map((m: LLMMessage) => {

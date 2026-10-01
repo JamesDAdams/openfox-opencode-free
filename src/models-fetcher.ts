@@ -1,5 +1,6 @@
 import type { ModelConfig } from 'openfox/provider'
 import { DEFAULT_SETTINGS, type OpenCodePluginSettings } from './settings.js'
+import type { PluginNotificationRequest } from './types.js'
 
 export interface OpenCodeModelApiItem {
   id: string
@@ -51,104 +52,32 @@ export interface ModelsDevApiResponse {
   }
 }
 
-export const DEFAULT_FREE_MODELS: ModelConfig[] = [
-  {
-    id: 'deepseek-v4-flash-free',
-    name: 'DeepSeek V4 Flash (free)',
-    contextWindow: 1048576,
-    source: 'backend',
-    supportsVision: false,
-    selected: true,
-    reasoningEfforts: ['low', 'high', 'max'],
-  },
-  {
-    id: 'x-preview-f-free',
-    name: 'X Preview F (free)',
-    contextWindow: 1000000,
-    source: 'backend',
-    supportsVision: true,
-    selected: true,
-    reasoningEfforts: ['low', 'high', 'max'],
-  },
-  {
-    id: 'muse-spark-1.2-contributor-free',
-    name: 'Muse Spark 1.2 Contributor (free)',
-    contextWindow: 1048576,
-    source: 'backend',
-    supportsVision: true,
-    selected: true,
-    reasoningEfforts: ['minimal', 'low', 'medium', 'high', 'xhigh'],
-  },
-  {
-    id: 'mimo-v2.5-free',
-    name: 'Mimo V2.5 (free)',
-    contextWindow: 1048576,
-    source: 'backend',
-    supportsVision: true,
-    selected: true,
-    reasoningEfforts: ['low', 'medium', 'high'],
-  },
-  {
-    id: 'hy3-free',
-    name: 'HY3 (free)',
-    contextWindow: 256000,
-    source: 'backend',
-    supportsVision: false,
-    selected: true,
-    reasoningEfforts: ['low', 'medium', 'high'],
-  },
-  {
-    id: 'nemotron-3-ultra-free',
-    name: 'Nemotron 3 Ultra (free)',
-    contextWindow: 1000000,
-    source: 'backend',
-    supportsVision: false,
-    selected: true,
-    reasoningEfforts: ['low', 'medium', 'high'],
-  },
-  {
-    id: 'nemotron-3.5-lightning-free',
-    name: 'Nemotron 3.5 Lightning (free)',
-    contextWindow: 262144,
-    source: 'backend',
-    supportsVision: false,
-    selected: true,
-    reasoningEfforts: ['low', 'medium', 'high'],
-  },
-  {
-    id: 'laguna-s-2.1-free',
-    name: 'Laguna S 2.1 (free)',
-    contextWindow: 256000,
-    source: 'backend',
-    supportsVision: false,
-    selected: true,
-    reasoningEfforts: ['low', 'medium', 'high'],
-  },
-]
-
 export interface OpenCodeFreeModelManagerOptions {
   refreshIntervalMs?: number
   apiEndpoint?: string
   modelsDevEndpoint?: string
   fetcher?: typeof fetch
-  notify?: (notification: { title: string; body: string }) => void
+  notify?: (notification: PluginNotificationRequest) => void
   settings?: OpenCodePluginSettings
+  getDynamicSettings?: () => OpenCodePluginSettings | undefined
 }
 
 export class OpenCodeFreeModelManager {
-  private cachedModels: ModelConfig[] = [...DEFAULT_FREE_MODELS]
-  private knownModelIds: Set<string> = new Set(DEFAULT_FREE_MODELS.map((m) => m.id))
+  private cachedModels: ModelConfig[] = []
+  private knownModelIds: Set<string> = new Set()
   private lastDiscoveredModels: string[] = []
   private lastRemovedModels: string[] = []
   private isInitialLoad = true
   private lastFetchTimestamp = 0
-  private timer: NodeJS.Timeout | null = null
+  private heartbeatTimer: NodeJS.Timeout | null = null
+  private isDestroyed = false
   private readonly customRefreshIntervalMs?: number
   private readonly apiEndpoint: string
   private readonly modelsDevEndpoint: string
   private readonly fetcher: typeof fetch
-  private notifier?: (notification: { title: string; body: string }) => void
+  private notifier?: (notification: PluginNotificationRequest) => void
   private settings: OpenCodePluginSettings
+  private readonly dynamicSettingsGetter?: () => OpenCodePluginSettings | undefined
 
   constructor(options?: OpenCodeFreeModelManagerOptions) {
     this.customRefreshIntervalMs = options?.refreshIntervalMs
@@ -157,32 +86,33 @@ export class OpenCodeFreeModelManager {
     this.fetcher = options?.fetcher ?? fetch
     this.notifier = options?.notify
     this.settings = options?.settings ?? { ...DEFAULT_SETTINGS }
+    this.dynamicSettingsGetter = options?.getDynamicSettings
   }
 
   getRefreshIntervalMs(): number {
     if (this.customRefreshIntervalMs !== undefined) {
       return this.customRefreshIntervalMs
     }
-    const minutes = this.settings.refreshIntervalMinutes || DEFAULT_SETTINGS.refreshIntervalMinutes
-    return minutes * 60 * 1000
+    const current = this.getSettings()
+    const minutes = current.refreshIntervalMinutes || DEFAULT_SETTINGS.refreshIntervalMinutes
+    return Math.max(1, minutes) * 60 * 1000
   }
 
-  setNotifier(notify: (notification: { title: string; body: string }) => void): void {
+  setNotifier(notify: (notification: PluginNotificationRequest) => void): void {
     this.notifier = notify
   }
 
   updateSettings(settings: OpenCodePluginSettings): void {
-    const previousInterval = this.getRefreshIntervalMs()
     this.settings = { ...settings }
-    const newInterval = this.getRefreshIntervalMs()
-
-    if (this.timer && previousInterval !== newInterval) {
-      this.stopPeriodicRefresh()
-      this.startPeriodicRefresh(false)
-    }
   }
 
   getSettings(): OpenCodePluginSettings {
+    if (this.dynamicSettingsGetter) {
+      const dynamic = this.dynamicSettingsGetter()
+      if (dynamic) {
+        return dynamic
+      }
+    }
     return { ...this.settings }
   }
 
@@ -195,23 +125,32 @@ export class OpenCodeFreeModelManager {
   }
 
   /**
-   * Start periodic background refresh.
+   * Start periodic background refresh using a resilient heartbeat ticker.
    */
-  startPeriodicRefresh(checkOnStart = this.settings.checkOnStartup): void {
-    if (this.timer) return
+  startPeriodicRefresh(checkOnStart?: boolean): void {
+    if (this.isDestroyed) return
+    this.stopPeriodicRefresh()
 
-    if (checkOnStart) {
+    const settings = this.getSettings()
+    if (checkOnStart ?? settings.checkOnStartup) {
       this.refreshFreeModels(false, false).catch(() => {})
     }
 
-    this.timer = setInterval(() => {
-      this.refreshFreeModels(false, false).catch(() => {
-        // Ignore background refresh errors; stale cache will remain
-      })
-    }, this.getRefreshIntervalMs())
+    // Heartbeat ticker checks every 5 seconds if the refresh interval has elapsed
+    this.heartbeatTimer = setInterval(async () => {
+      if (this.isDestroyed) return
+      const intervalMs = this.getRefreshIntervalMs()
+      const now = Date.now()
+      if (now - this.lastFetchTimestamp >= intervalMs) {
+        this.lastFetchTimestamp = now
+        try {
+          await this.refreshFreeModels(false, false)
+        } catch {}
+      }
+    }, 5000)
 
-    if (this.timer.unref) {
-      this.timer.unref()
+    if (this.heartbeatTimer.unref) {
+      this.heartbeatTimer.unref()
     }
   }
 
@@ -219,10 +158,15 @@ export class OpenCodeFreeModelManager {
    * Stop periodic background refresh.
    */
   stopPeriodicRefresh(): void {
-    if (this.timer) {
-      clearInterval(this.timer)
-      this.timer = null
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer)
+      this.heartbeatTimer = null
     }
+  }
+
+  destroy(): void {
+    this.isDestroyed = true
+    this.stopPeriodicRefresh()
   }
 
   /**
@@ -232,9 +176,10 @@ export class OpenCodeFreeModelManager {
     const now = Date.now()
     if (
       forceRefresh ||
+      this.cachedModels.length === 0 ||
       now - this.lastFetchTimestamp >= this.getRefreshIntervalMs()
     ) {
-      if (forceRefresh) {
+      if (forceRefresh || this.cachedModels.length === 0) {
         await this.refreshFreeModels(forceRefresh, isManual)
       } else {
         this.refreshFreeModels(false, isManual).catch(() => {})
@@ -252,7 +197,7 @@ export class OpenCodeFreeModelManager {
       const res = await this.fetcher(this.modelsDevEndpoint, {
         headers: {
           Accept: 'application/json',
-          'User-Agent': 'OpenFox-OpenCode-Free-Plugin',
+          'User-Agent': 'opencode/1.0.0',
         },
         signal: AbortSignal.timeout(5000),
       })
@@ -290,12 +235,15 @@ export class OpenCodeFreeModelManager {
    * enriches with models.dev info (context window, vision, reasoning efforts), adds new free models, and removes retired ones.
    */
   async refreshFreeModels(_forceRefresh = false, isManual = false): Promise<ModelConfig[]> {
+    const settings = this.getSettings()
     try {
       const [openCodeRes, devMap] = await Promise.all([
         this.fetcher(this.apiEndpoint, {
           headers: {
             Accept: 'application/json',
-            'User-Agent': 'OpenFox-OpenCode-Free-Plugin',
+            'User-Agent': 'opencode/1.0.0',
+            'x-opencode-client': 'cli',
+            Authorization: 'Bearer public',
           },
           signal: AbortSignal.timeout(5000),
         }).catch(() => null),
@@ -305,8 +253,15 @@ export class OpenCodeFreeModelManager {
       if (!openCodeRes || !openCodeRes.ok) {
         if (isManual && this.notifier) {
           this.notifier({
-            title: 'OpenCode Sync Failed',
-            body: `Failed to fetch models from OpenCode (HTTP ${openCodeRes?.status ?? 'error'}).`,
+            title: {
+              en: 'OpenCode Sync Failed',
+              fr: 'Échec de synchronisation OpenCode',
+            },
+            body: {
+              en: `Failed to fetch models from OpenCode (HTTP ${openCodeRes?.status ?? 'error'}).`,
+              fr: `Impossible de récupérer les modèles depuis OpenCode (HTTP ${openCodeRes?.status ?? 'error'}).`,
+            },
+            level: 'error',
           })
         }
         return this.cachedModels
@@ -400,7 +355,7 @@ export class OpenCodeFreeModelManager {
       const wasInitial = this.isInitialLoad
       this.lastDiscoveredModels = newlyDiscoveredModels
       this.lastRemovedModels = removedModels
-      if (freeModels.length > 0) {
+      if (freeModels.length > 0 || this.isInitialLoad) {
         this.cachedModels = freeModels
         this.knownModelIds = freeModelIds
       }
@@ -409,30 +364,63 @@ export class OpenCodeFreeModelManager {
 
       // Notifications logic
       if (this.notifier) {
-        const changes: string[] = []
+        const changesEn: string[] = []
+        const changesFr: string[] = []
+
         if (newlyDiscoveredModels.length > 0) {
-          changes.push(`Added (${newlyDiscoveredModels.length}): ${newlyDiscoveredModels.join(', ')}`)
+          changesEn.push(`Added (${newlyDiscoveredModels.length}): ${newlyDiscoveredModels.join(', ')}`)
+          changesFr.push(`Ajouté (${newlyDiscoveredModels.length}) : ${newlyDiscoveredModels.join(', ')}`)
         }
         if (removedModels.length > 0) {
-          changes.push(`Removed (${removedModels.length}): ${removedModels.join(', ')}`)
+          changesEn.push(`Removed (${removedModels.length}): ${removedModels.join(', ')}`)
+          changesFr.push(`Supprimé (${removedModels.length}) : ${removedModels.join(', ')}`)
         }
 
         if (isManual) {
           this.notifier({
-            title: 'OpenCode Free Models Synchronized',
-            body: changes.length > 0
-              ? `Sync complete: ${freeModels.length} free models available (${changes.join(' | ')}).`
-              : `Sync complete: ${freeModels.length} free models are available (no changes).`,
+            title: {
+              en: 'OpenCode Free Models Synchronized',
+              fr: 'Modèles gratuits OpenCode synchronisés',
+            },
+            body: {
+              en:
+                changesEn.length > 0
+                  ? `Sync complete: ${freeModels.length} free models available (${changesEn.join(' | ')}).`
+                  : `Sync complete: ${freeModels.length} free models are available (no changes).`,
+              fr:
+                changesFr.length > 0
+                  ? `Synchronisation terminée : ${freeModels.length} modèles gratuits disponibles (${changesFr.join(' | ')}).`
+                  : `Synchronisation terminée : ${freeModels.length} modèles gratuits disponibles (aucun changement).`,
+            },
+            level: 'success',
           })
-        } else if (!wasInitial && changes.length > 0 && (this.settings.notifyOnNewModelsOnly || this.settings.notifyOnEveryCheck)) {
+        } else if (
+          !wasInitial &&
+          changesEn.length > 0 &&
+          (settings.notifyOnNewModelsOnly || settings.notifyOnEveryCheck)
+        ) {
           this.notifier({
-            title: 'OpenCode Free Models Updated',
-            body: changes.join('\n'),
+            title: {
+              en: 'OpenCode Free Models Updated',
+              fr: 'Modèles gratuits OpenCode mis à jour',
+            },
+            body: {
+              en: changesEn.join('\n'),
+              fr: changesFr.join('\n'),
+            },
+            level: 'info',
           })
-        } else if (this.settings.notifyOnEveryCheck && (!wasInitial || changes.length === 0)) {
+        } else if (settings.notifyOnEveryCheck && (!wasInitial || changesEn.length === 0)) {
           this.notifier({
-            title: 'OpenCode Free Models Checked',
-            body: `Check complete: ${freeModels.length} free models available (no changes).`,
+            title: {
+              en: 'OpenCode Free Models Checked',
+              fr: 'Vérification des modèles gratuits OpenCode terminée',
+            },
+            body: {
+              en: `Check complete: ${freeModels.length} free models available (no changes).`,
+              fr: `Vérification terminée : ${freeModels.length} modèles gratuits disponibles (aucun changement).`,
+            },
+            level: 'info',
           })
         }
       }
@@ -441,8 +429,15 @@ export class OpenCodeFreeModelManager {
     } catch (err) {
       if (isManual && this.notifier) {
         this.notifier({
-          title: 'OpenCode Sync Error',
-          body: err instanceof Error ? err.message : 'Error syncing models from OpenCode',
+          title: {
+            en: 'OpenCode Sync Error',
+            fr: 'Erreur de synchronisation OpenCode',
+          },
+          body: {
+            en: err instanceof Error ? err.message : 'Error syncing models from OpenCode',
+            fr: err instanceof Error ? err.message : 'Erreur lors de la synchronisation des modèles OpenCode',
+          },
+          level: 'error',
         })
       }
       return this.cachedModels
